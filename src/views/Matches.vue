@@ -23,7 +23,53 @@
         <div class="p-6 border-b border-gray-800">
           <h2 class="text-lg font-semibold text-white mb-4">Filtres</h2>
 
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <!-- Sélection marché / période / ligne -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div>
+              <label class="block text-sm font-semibold text-gray-300 mb-2">Marché</label>
+              <select
+                v-model.number="filters.marketId"
+                class="w-full px-4 py-2.5 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition appearance-none bg-gray-900"
+                @change="handleMarketChange"
+              >
+                <option v-for="market in markets" :key="market.id" :value="market.id">
+                  {{ market.name }}
+                </option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold text-gray-300 mb-2">Période</label>
+              <select
+                v-model="filters.period"
+                class="w-full px-4 py-2.5 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition appearance-none bg-gray-900 disabled:opacity-40 disabled:cursor-not-allowed"
+                :disabled="availablePeriods.length === 0"
+                @change="fetchMatches"
+              >
+                <option value="">Toutes les périodes</option>
+                <option v-for="period in availablePeriods" :key="period" :value="period">
+                  {{ periodLabels[period] || period }}
+                </option>
+              </select>
+            </div>
+
+            <div v-if="availableLines.length > 0">
+              <label class="block text-sm font-semibold text-gray-300 mb-2">Ligne</label>
+              <select
+                :value="filters.line === null ? '' : String(filters.line)"
+                class="w-full px-4 py-2.5 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition appearance-none bg-gray-900"
+                @change="(e) => { filters.line = (e.target as HTMLSelectElement).value === '' ? null : Number((e.target as HTMLSelectElement).value); fetchMatches(); }"
+              >
+                <option value="">Toutes les lignes</option>
+                <option v-for="line in availableLines" :key="line" :value="String(line)">
+                  {{ line > 0 ? '+' + line : line }}
+                </option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Recherche et dates -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label class="block text-sm font-semibold text-gray-300 mb-2">
                 <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -38,28 +84,6 @@
                 class="w-full px-4 py-2.5 border border-gray-700 rounded-lg text-black placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition"
                 @input="debouncedFetch"
               />
-            </div>
-
-            <div>
-              <label class="block text-sm font-semibold text-gray-300 mb-2">
-                <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"/>
-                </svg>
-                Marché
-              </label>
-              <select
-                v-model.number="filters.marketId"
-                class="w-full px-4 py-2.5 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition appearance-none bg-gray-900"
-                @change="fetchMatches"
-              >
-                <option
-                  v-for="market in markets"
-                  :key="market.id"
-                  :value="market.id"
-                >
-                  {{ market.name }}
-                </option>
-              </select>
             </div>
 
             <div>
@@ -189,7 +213,11 @@
                 @click="goToMatchOdds(match.id)"
               >
                 <td class="px-6 py-4">
-                  <div class="font-semibold text-white">{{ match.home_team.name }} - {{ match.away_team.name }}</div>
+                  <div class="font-semibold text-white">
+                    {{ match.home_team && match.away_team
+                      ? `${match.home_team.name} - ${match.away_team.name}`
+                      : match.name }}
+                  </div>
                 </td>
                 <td class="px-6 py-4">
                   <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-gray-800 text-gray-300">
@@ -324,11 +352,13 @@ interface Match {
   id: number;
   sport_id: number;
   league_id: number;
-  home_team_id: number;
-  away_team_id: number;
+  event_type: 'MATCH' | 'OUTRIGHT';
+  name: string | null;
+  home_team_id: number | null;
+  away_team_id: number | null;
   start_time: string;
-  home_team: Team;
-  away_team: Team;
+  home_team: Team | null;
+  away_team: Team | null;
   league: League;
   best_odds?: Partial<Record<OutcomeKey, BestOutcomeOdds | null>>;
 }
@@ -348,6 +378,7 @@ interface Market {
   id: number;
   name: string;
   description?: string | null;
+  market_type?: string;
 }
 
 interface BestOutcomeOdds {
@@ -375,15 +406,30 @@ const sortOrder = ref<'asc' | 'desc'>('asc');
 const filters = ref<{
   search: string;
   marketId: number | null;
+  period: string;
+  line: number | null;
   startDate: string;
   endDate: string;
 }>({
   search: '',
   marketId: null,
+  period: '',
+  line: null,
   startDate: '',
   endDate: ''
 });
 const leagueSearch = ref('');
+
+const availableLines = ref<number[]>([]);
+const availablePeriods = ref<string[]>([]);
+const loadingMarketOptions = ref(false);
+
+const periodLabels: Record<string, string> = {
+  'FT': 'Temps plein',
+  'RT': 'Temps réglementaire',
+  '1H': '1ère mi-temps',
+  '2H': '2ème mi-temps',
+};
 
 let debounceTimeout: number | null = null;
 
@@ -468,6 +514,8 @@ const debouncedFetch = () => {
 
 const resetFilters = () => {
   filters.value.search = '';
+  filters.value.period = '';
+  filters.value.line = null;
   filters.value.startDate = '';
   filters.value.endDate = '';
   selectedLeagues.value = [];
@@ -476,6 +524,34 @@ const resetFilters = () => {
 
 const goToMatchOdds = (matchId: number) => {
   router.push(`/matches/${matchId}/odds`);
+};
+
+const fetchMarketOptions = async (marketId: number) => {
+  try {
+    loadingMarketOptions.value = true;
+    const response = await api.get(`/sports/${sportId}/markets/${marketId}/options`);
+    availablePeriods.value = response.data.periods || [];
+    availableLines.value = response.data.lines || [];
+    filters.value.period = '';
+    filters.value.line = null;
+  } catch {
+    availablePeriods.value = [];
+    availableLines.value = [];
+  } finally {
+    loadingMarketOptions.value = false;
+  }
+};
+
+const handleMarketChange = async () => {
+  if (filters.value.marketId) {
+    await fetchMarketOptions(filters.value.marketId);
+  } else {
+    availablePeriods.value = [];
+    availableLines.value = [];
+    filters.value.period = '';
+    filters.value.line = null;
+  }
+  fetchMatches();
 };
 
 const fetchMarkets = async () => {
@@ -527,6 +603,14 @@ const fetchMatches = async () => {
       params.append('market_id', String(filters.value.marketId));
     }
 
+    if (filters.value.period) {
+      params.append('period', filters.value.period);
+    }
+
+    if (filters.value.line !== null) {
+      params.append('line', String(filters.value.line));
+    }
+
     const url = `/sports/${sportId}/matches-with-odds${params.toString() ? '?' + params.toString() : ''}`;
     const response = await api.get(url);
     matches.value = response.data;
@@ -545,6 +629,9 @@ const getBestOutcomeOdds = (match: Match, outcomeKey: 'home' | 'draw' | 'away') 
 
 onMounted(async () => {
   await fetchMarkets();
+  if (filters.value.marketId) {
+    await fetchMarketOptions(filters.value.marketId);
+  }
   fetchMatches();
 });
 </script>

@@ -32,21 +32,62 @@
         <div v-else>
           <div class="bg-gray-900 rounded-lg shadow border border-gray-700 p-6 mb-6">
             <h2 class="text-lg font-semibold text-white mb-4">Sélectionner un marché</h2>
-            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-              <button
-                v-for="market in sortedAvailableMarkets"
-                :key="market.id"
-                @click="selectedMarketId = market.id"
-                :class="[
-                  'px-4 py-2.5 rounded-lg text-sm font-semibold transition-all',
-                  selectedMarketId === market.id
-                    ? 'bg-primary-600 text-white'
-                    : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                ]"
-              >
-                {{ market.market.name }}
-                <span v-if="market.line" class="text-xs ml-1">({{ market.line }})</span>
-              </button>
+
+            <!-- Marché : boutons toggle -->
+            <div class="mb-4">
+              <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Marché</p>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  v-for="name in uniqueMarketNames"
+                  :key="name"
+                  @click="handleMarketNameChange(name)"
+                  :class="[
+                    'px-4 py-2 rounded-lg text-sm font-semibold transition-all',
+                    selectedMarketName === name
+                      ? 'bg-primary-600 text-white'
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  ]"
+                >
+                  {{ name }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Période : radio buttons + Ligne : dropdown (sur la même ligne) -->
+            <div v-if="periodsForMarket.length > 0 || linesForSelection.length > 0" class="flex flex-wrap items-end gap-8">
+              <div v-if="periodsForMarket.length > 0">
+                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Période</p>
+                <div class="flex flex-wrap gap-4">
+                  <label
+                    v-for="period in periodsForMarket"
+                    :key="period"
+                    class="flex items-center gap-2 cursor-pointer"
+                  >
+                    <input
+                      type="radio"
+                      :value="period"
+                      v-model="selectedPeriod"
+                      @change="handlePeriodChange"
+                      class="w-4 h-4 text-primary-600 border-gray-600 bg-gray-800 focus:ring-primary-500 focus:ring-2"
+                    />
+                    <span class="text-sm font-medium text-gray-300">{{ periodLabels[period] || period }}</span>
+                  </label>
+                </div>
+              </div>
+
+              <div v-if="linesForSelection.length > 0">
+                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Ligne</p>
+                <select
+                  :value="selectedLine === null ? '' : String(selectedLine)"
+                  class="px-4 py-2 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition appearance-none bg-gray-800"
+                  @change="(e) => { selectedLine = (e.target as HTMLSelectElement).value === '' ? null : Number((e.target as HTMLSelectElement).value); }"
+                >
+                  <option value="">Toutes les lignes</option>
+                  <option v-for="line in linesForSelection" :key="line" :value="String(line)">
+                    {{ line > 0 ? '+' + line : line }}
+                  </option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -210,30 +251,77 @@ const matchId = route.params.matchId;
 const matchOdds = ref<MatchOdds | null>(null);
 const loading = ref(true);
 const error = ref('');
-const selectedMarketId = ref<number | null>(null);
+const selectedMarketName = ref<string | null>(null);
+const selectedPeriod = ref<string>('');
+const selectedLine = ref<number | null>(null);
 
 const availableMarkets = computed(() => {
   if (!matchOdds.value) return [];
   return matchOdds.value.markets;
 });
 
-const sortedAvailableMarkets = computed(() => {
-  const markets = [...availableMarkets.value];
-
-  markets.sort((a, b) => {
-    if (a.line !== null && b.line !== null) {
-      return a.line - b.line;
+const uniqueMarketNames = computed(() => {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const m of availableMarkets.value) {
+    if (!seen.has(m.market.name)) {
+      seen.add(m.market.name);
+      names.push(m.market.name);
     }
-    return 0;
-  });
+  }
+  return names;
+});
 
-  return markets;
+const periodsForMarket = computed(() => {
+  if (!selectedMarketName.value) return [];
+  const seen = new Set<string>();
+  const periods: string[] = [];
+  for (const m of availableMarkets.value) {
+    if (m.market.name === selectedMarketName.value && m.period && !seen.has(m.period)) {
+      seen.add(m.period);
+      periods.push(m.period);
+    }
+  }
+  return periods;
+});
+
+const linesForSelection = computed(() => {
+  if (!selectedMarketName.value) return [];
+  const lines: number[] = [];
+  for (const m of availableMarkets.value) {
+    if (m.market.name !== selectedMarketName.value) continue;
+    if (selectedPeriod.value && m.period !== selectedPeriod.value) continue;
+    if (m.line !== null && !lines.includes(m.line)) lines.push(m.line);
+  }
+  return lines.sort((a, b) => a - b);
 });
 
 const selectedMarket = computed(() => {
-  if (!selectedMarketId.value) return null;
-  return availableMarkets.value.find(m => m.id === selectedMarketId.value) || null;
+  if (!selectedMarketName.value) return null;
+  return availableMarkets.value.find(m => {
+    if (m.market.name !== selectedMarketName.value) return false;
+    if (selectedPeriod.value && m.period !== selectedPeriod.value) return false;
+    if (selectedLine.value !== null && m.line !== selectedLine.value) return false;
+    return true;
+  }) ?? null;
 });
+
+const periodLabels: Record<string, string> = {
+  'FT': 'Temps plein',
+  'RT': 'Temps réglementaire',
+  '1H': '1ère mi-temps',
+  '2H': '2ème mi-temps',
+};
+
+const handleMarketNameChange = (name?: string) => {
+  if (name !== undefined) selectedMarketName.value = name;
+  selectedPeriod.value = periodsForMarket.value.find(p => p === 'FT') ?? (periodsForMarket.value[0] ?? '');
+  selectedLine.value = linesForSelection.value.length === 1 ? linesForSelection.value[0] : null;
+};
+
+const handlePeriodChange = () => {
+  selectedLine.value = linesForSelection.value.length === 1 ? linesForSelection.value[0] : null;
+};
 
 const sortedOutcomes = computed(() => {
   if (!selectedMarket.value) return [];
@@ -269,8 +357,10 @@ const fetchMatchOdds = async () => {
     matchOdds.value = response.data;
 
     if (matchOdds.value && matchOdds.value.markets.length > 0) {
-      const mlMarket = matchOdds.value.markets.find(m => m.market.name.toLowerCase() === 'ml');
-      selectedMarketId.value = mlMarket ? mlMarket.id : matchOdds.value.markets[0].id;
+      const mlName = matchOdds.value.markets.find(m => m.market.name.toLowerCase() === 'ml')?.market.name;
+      selectedMarketName.value = mlName ?? uniqueMarketNames.value[0] ?? null;
+      selectedPeriod.value = periodsForMarket.value.find(p => p === 'FT') ?? (periodsForMarket.value[0] ?? '');
+      selectedLine.value = linesForSelection.value.length === 1 ? linesForSelection.value[0] : null;
     }
   } catch (err: any) {
     error.value = err.response?.data?.detail || 'Failed to load match odds';
